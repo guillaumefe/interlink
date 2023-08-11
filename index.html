@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>App de Messagerie Peer</title>
+    <style>
+        body { font-family: 'Arial', sans-serif; background-color: #f3e9f1; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        h2 { color: #b2a1b9; }
+        .container { display: flex; flex-direction: column; gap: 20px; width: 100%; max-width: 500px; }
+        div, ul, #messages { background: #ffffff; padding: 20px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); }
+        #messages { flex-direction: column; gap: 10px; max-height: 300px; overflow-y: auto; }
+        input, button { margin: 5px 0; padding: 10px; border: 1px solid #d1c4d6; border-radius: 5px; cursor: pointer; }
+        button { background-color: #d1c4d6; color: white; }
+        #log { color: #888; font-size: 0.8rem; }
+        #editorContainer { height: 200px; }
+        #editor { width: 99%; height: 100%; border: 1px lightgray solid; min-height:100px;}
+        .popover { position: absolute; background-color: #f44336; color: white; padding: 10px; border-radius: 5px; top: 20px; left: 50%; transform: translateX(-50%); display: none; z-index: 10; }
+        #connect-container { display: flex; align-items: center; }
+        .trash-icon, .copy-icon, .status-icon { background-color: black; border: none; border-radius: 50%; width: 20px; height: 20px; line-height: 20px; text-align: center; color: white; cursor: pointer; float: left; margin-right: 5px; }
+        .recipient { background-color: transparent; color: inherit; cursor: pointer; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+        .selected { background-color: #d1c4d6; }
+        .message-count { display: inline-block; background: red; color: white; border-radius: 50%; width: 20px; height: 20px; line-height: 20px; text-align: center; vertical-align: middle; margin-left: 10px; }
+        #help { font-size: 0.8rem; color: #555; margin-top: 5px; }
+        .online { color: green; }
+        .offline { color: orange; }
+        .chat-container { display: flex; flex-direction: column; align-items: flex-start; }
+        .chat-bubble { border-radius: 15px; padding: 8px 15px; margin: 5px; max-width: 70%; }
+        .my-message { align-self: flex-end; background-color: #d1c4d6; color: white; }
+        .sent-message { align-self: flex-end; background-color: #aedbf3; color: black; }
+		#no-messages,
+		#no-log {
+			font-size: 0.8rem;
+			color: #555;
+		}
+		.connection-label {
+			font-size: 1rem;
+			color: #b2a1b9;
+			margin-bottom: 5px;
+		}
+		/* Classe pour les boutons verts */
+		.success-button {
+			background-color: green;
+			color: white;
+		}
+    </style>
+</head>
+<body>
+    <h2>INTERLINK</h2>
+    <div class="popover" id="alert-popover"></div>
+    <div class="container">
+        <div class="connection-label">Mon ID: <span id="my-id"></span> <button class="copy-icon" onclick="copyId()">📋</button></div>
+        <div id="connect-container" class="connection-label"> Connecter à l'ID: &nbsp;<input type="text" id="connect-id" style="flex-grow: 1;">&nbsp; <button onclick="connectToPeer()" style="margin-left: 10px; padding-left: 10px; padding-right: 10px;">Connecter</button> </div>
+        <div id="connected-peers" class="connection-label">Connecté avec:</div>
+        <div class="chat-container" id="messages">
+            <p id="no-messages">Aucun message pour l'instant.</p>
+        </div>
+        <textarea id="editor" oninput="updateRecipientCount()" placeholder="1. Obtenez l'ID d'un tiers\n2. Connectez-vous à lui\n3. Sélectionnez un destinataire\n4. Rédigez et envoyez votre premier message."></textarea>
+        <button onclick="sendMessage()">Envoyer <span id="recipient-count" class="message-count">0</span></button>
+        <div id="log">Log de Connexion: <p id="no-log">Aucun log pour l'instant</p></div>
+        <div id="help">Aide: Cliquez sur les connexions pour sélectionner les destinataires, puis envoyez le message en appuyant sur le bouton "Envoyer".</div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/peerjs@1.3.1/dist/peerjs.min.js"></script>
+    <script>
+        const connectedPeers = {};
+		const HEARTBEAT_INTERVAL = 30000; // 30 secondes
+		const HEARTBEAT_MESSAGE = "heartbeat";
+
+		setInterval(() => {
+			for (const peerId in connectedPeers) {
+				if (connectedPeers.hasOwnProperty(peerId)) {
+					connectedPeers[peerId].send(HEARTBEAT_MESSAGE);
+				}
+			}
+		}, HEARTBEAT_INTERVAL);
+		// Avant l'initialisation du Peer
+		const savedUUID = localStorage.getItem('myUUID');
+
+		let peerId = savedUUID;
+
+		if (!peerId || inPrivateMode()) {
+			peerId = generateUUID();
+		}
+		
+		const peer = savedUUID ? new Peer(peerId) : new Peer(undefined, {
+															  host: '0.peerjs.com',
+															  secure: true
+															});
+																	
+		//new Peer({
+			//host: 'localhost',
+			//port: 9000,
+			//path: '/myapp'
+		//});
+		
+		peer.on('open', id => {
+			if (!inPrivateMode()) {
+				document.getElementById('my-id').innerText = id;
+				localStorage.setItem('myUUID', peerId);
+			}
+		});
+        peer.on('connection', conn => {
+            conn.on('data', displayMessage);
+            conn.on('close', () => updateConnectionStatus(conn.peer, false));
+            connectedPeers[conn.peer] = conn;
+            addConnectedPeer(conn.peer, true);
+            updateLog(`Connexion établie avec ${conn.peer}`);
+        });
+        peer.on('disconnected', () => updateLog('Déconnecté du serveur PeerJS'));
+        peer.on('close', () => updateLog('Connexion fermée'));
+        peer.on('error', err => updateLog(`Erreur: ${err}`));
+        const pastelColors = ['#f1c3d6', '#f1e1c3', '#c3f1e1', '#c3d6f1'];
+        const colorMap = {};
+        function getColorForPeer(peerId) {
+            if (!colorMap[peerId]) {
+                colorMap[peerId] = pastelColors[Object.keys(colorMap).length % pastelColors.length];
+            }
+            return colorMap[peerId];
+        }
+
+function connectToPeer() {
+    const peerId = document.getElementById('connect-id').value;
+    const connectButton = document.querySelector('button[onclick="connectToPeer()"]');
+    const originalButtonText = connectButton.innerText; // Sauvegarde du texte original du bouton
+
+    if (peerId !== peer.id) {
+        if (!connectedPeers[peerId]) {
+            connectButton.innerText = 'Connexion en cours...'; // Mise à jour du texte du bouton
+            connectButton.disabled = true; // Désactiver le bouton pendant la connexion
+
+            const conn = peer.connect(peerId);
+            conn.on('open', () => {
+				conn.on('data', displayMessage);
+				connectedPeers[conn.peer] = conn;
+				addConnectedPeer(conn.peer, true);
+				updateLog(`Connexion établie avec ${conn.peer}`);
+				connectButton.classList.add('success-button');
+				connectButton.innerText = originalButtonText;
+
+				// Réactive le bouton après 3 secondes
+				setTimeout(() => {
+					connectButton.classList.remove('success-button');
+					connectButton.disabled = false;
+				}, 1000); // Attente de 1000 millisecondes (1 secondes)
+			});
+			
+			setTimeout(() => {
+				if (! conn.open ) {
+					connectButton.classList.remove('success-button');
+					connectButton.disabled = false;
+					connectButton.innerText = originalButtonText;
+				}
+			}, 3000); // Attente de 3000 millisecondes (3 secondes)
+
+			conn.on('error', () => {
+				showAlert('Identifiant inconnu');
+				updateLog(`Erreur de connexion avec ${peerId}`);
+			});
+        } else {
+            showAlert('Connexion déjà établie.');
+        }
+    } else {
+        showAlert('Connexion à soi-même impossible.');
+    }
+}
+
+		
+        function displayMessage(data) {
+			const messagesDiv = document.getElementById('messages');
+			const noMessagesElement = document.getElementById('no-messages');
+            const color = getColorForPeer(data.from);
+			const messageElement = document.createElement('div');
+            messageElement.classList.add('chat-bubble');
+            messageElement.style.backgroundColor = color;
+            if (data.from !== peer.id) {
+				messageElement.innerHTML = `De ${data.from}:<br>Vers: Moi<br>${data.message && data.message.replace('\n', '<br>')}`;
+				// Si un message est ajouté, masquer le message "Aucun message"
+				if (messagesDiv.children.length > 0) {
+					noMessagesElement.style.display = 'none';
+				}
+				data.from && messagesDiv.appendChild(messageElement);
+				autoscroll();
+			}
+        }
+		
+        function showAlert(message) {
+            const popover = document.getElementById('alert-popover');
+            popover.textContent = message;
+            popover.style.display = 'block';
+            setTimeout(() => popover.style.display = 'none', 3000);
+        }
+        function addConnectedPeer(peerId, online) {
+            const container = document.getElementById('connected-peers');
+            const listItem = document.createElement('div');
+            listItem.innerHTML = `
+                <span class="status-icon">${online ? '✔' : '✖'}</span>
+                ${peerId}
+                <button class="copy-icon" onclick="copyPeerId('${peerId}')">📋</button>
+                <button class="trash-icon" onclick="disconnectPeer('${peerId}')">🗑️</button>
+            `;
+            listItem.setAttribute('data-peer-id', peerId);
+            listItem.classList.add('recipient');
+            listItem.classList.add(online ? 'online' : 'offline');
+            listItem.addEventListener('click', () => selectRecipient(listItem));
+            container.appendChild(listItem);
+            updateRecipientCount();
+        }
+		
+        function selectRecipient(element) {
+            element.classList.toggle('selected');
+            updateRecipientCount();
+        }
+		
+		function disconnectPeer(peerId) {
+			if(connectedPeers[peerId]) {
+				connectedPeers[peerId].close();
+				delete connectedPeers[peerId];
+				const item = document.querySelector(`[data-peer-id="${peerId}"]`);
+				if (item) item.remove();
+				updateLog(`Connexion fermée avec ${peerId}`);
+
+				// Si tous les messages ont été supprimés, afficher le message "Aucun message"
+				const messagesDiv = document.getElementById('messages');
+				const noMessagesElement = document.getElementById('no-messages');
+				if (messagesDiv.children.length === 0) {
+					noMessagesElement.style.display = 'block';
+				}
+			}
+		}
+
+		
+        function updateConnectionStatus(peerId, status) {
+            const item = document.querySelector(`[data-peer-id="${peerId}"]`);
+            if (item) item.classList.toggle(status ? 'online' : 'offline');
+        }
+		
+function updateRecipientCount() {
+    const count = getSelectedRecipientCount();
+    updateSendButtonStatus(count);
+    displayRecipientCount(count);
+}
+
+function getSelectedRecipientCount() {
+    return document.querySelectorAll('.recipient.selected').length;
+}
+
+function updateSendButtonStatus(count) {
+    const messageInput = document.getElementById('editor');
+    const sendButton = document.querySelector('button[onclick="sendMessage()"]');
+
+    if (count > 0 && messageInput.value.trim() !== '') {
+        enableSendButton(sendButton);
+    } else {
+        disableSendButton(sendButton);
+    }
+}
+
+function enableSendButton(sendButton) {
+    sendButton.removeAttribute('disabled');
+    sendButton.classList.add('success-button'); // Adds the class
+}
+
+function disableSendButton(sendButton) {
+    sendButton.setAttribute('disabled', 'true');
+    sendButton.classList.remove('success-button'); // Removes the class
+}
+
+function displayRecipientCount(count) {
+    document.getElementById('recipient-count').innerText = count;
+}
+
+
+function copyId(event) {
+    const idElement = document.getElementById('my-id');
+    const textArea = document.createElement('textarea');
+    textArea.value = idElement.textContent;
+    document.body.appendChild(textArea);
+    textArea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textArea);
+    showAlert('ID copié dans le presse-papiers.');
+}
+
+        function updateLog(message) {
+            const logElement = document.getElementById('log');
+            const logItem = document.createElement('p');
+            logItem.textContent = message;
+            logElement.appendChild(logItem);
+            const noLogItem = document.getElementById('no-log');
+            if (noLogItem) {
+                noLogItem.style.display = 'none';
+            }
+        }
+function copyPeerId(peerId) {
+	event.stopPropagation();
+    const el = document.createElement('textarea');
+    el.value = peerId;
+    document.body.appendChild(el);
+    el.select();
+    document.execCommand('copy');
+    document.body.removeChild(el);
+    showAlert('ID copié dans le presse-papier.');
+}
+
+function autoscroll() {
+    const messagesDiv = document.getElementById('messages');
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+}
+
+
+
+function sendMessage() {
+    const recipients = Array.from(document.querySelectorAll('.recipient.selected')); // Convertir NodeList en Array
+    if (recipients.length === 0) {
+        showAlert('Sélectionnez au moins un destinataire.');
+        return;
+    }
+    const message = document.getElementById('editor').value;
+
+    // Créer une liste de destinataires
+    const recipientIds = recipients.map(recipient => recipient.getAttribute('data-peer-id'));
+    
+    recipients.forEach(recipient => {
+        const peerId = recipient.getAttribute('data-peer-id');
+        if (connectedPeers[peerId]) {
+            connectedPeers[peerId].send({ from: peer.id, to: peerId, message: message });
+        }
+    });
+    displayMyMessage(peer.id, recipientIds, message);
+    document.getElementById('editor').value = '';
+}
+
+function displayMyMessage(from, to, message) {
+    if (message === HEARTBEAT_MESSAGE) {
+        return;
+    }
+    const messagesDiv = document.getElementById('messages');
+    const messageElement = document.createElement('div');
+    const color = getColorForPeer(from);
+    messageElement.classList.add('chat-bubble', 'sent-message');
+    messageElement.style.backgroundColor = color;
+    
+    // Afficher une liste de destinataires au lieu d'un seul
+    messageElement.innerHTML = `De: Moi<br>Vers: ${to.join(', ')}<br>${message.replace('\n', '<br>')}`;
+    
+    messagesDiv.appendChild(messageElement);
+    autoscroll();
+}
+
+function inPrivateMode() {
+    try {
+        localStorage.setItem('test', 'test');
+        localStorage.removeItem('test');
+        return false;
+    } catch (e) {
+        return true;
+    }
+}
+
+function generateUUID() { // Générer un UUID v4
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
+}
+
+
+    </script>
+</body>
+</html>
