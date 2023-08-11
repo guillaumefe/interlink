@@ -94,10 +94,8 @@
 		//});
 		
 		peer.on('open', id => {
-			if (!inPrivateMode()) {
-				document.getElementById('my-id').innerText = id;
-				localStorage.setItem('myUUID', peerId);
-			}
+			document.getElementById('my-id').innerText = id;
+			localStorage.setItem('myUUID', peerId);
 		});
         peer.on('connection', conn => {
             conn.on('data', displayMessage);
