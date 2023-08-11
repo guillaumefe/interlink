@@ -78,11 +78,11 @@
 
 		let peerId = savedUUID;
 
-		if (!peerId || inPrivateMode()) {
+		if (!peerId) {
 			peerId = generateUUID();
 		}
 		
-		const peer = savedUUID ? new Peer(peerId) : new Peer(undefined, {
+		const peer = savedUUID ? new Peer(peerId) : new Peer(peerId, {
 															  host: '0.peerjs.com',
 															  secure: true
 															});
@@ -93,6 +93,7 @@
 			//path: '/myapp'
 		//});
 		
+
 		peer.on('open', id => {
 			document.getElementById('my-id').innerText = id;
 			localStorage.setItem('myUUID', peerId);
@@ -343,16 +344,6 @@ function displayMyMessage(from, to, message) {
     
     messagesDiv.appendChild(messageElement);
     autoscroll();
-}
-
-function inPrivateMode() {
-    try {
-        localStorage.setItem('test', 'test');
-        localStorage.removeItem('test');
-        return false;
-    } catch (e) {
-        return true;
-    }
 }
 
 function generateUUID() { // Générer un UUID v4
